@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Unalome Firewall",
+  "version": "0.1.0",
+  "identifier": "ai.unalome.firewall",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "꩜ Unalome - Personal Agent Firewall",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "default",
+          "permissions": [
+            "core:default",
+            "core:event:default",
+            "shell:allow-open"
+          ]
+        }
+      ]
+    },
+    "macOSPrivateApi": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.png"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Personal Agent Firewall & Observatory",
+    "longDescription": "Unalome is an open-source, local-first dashboard that sits between you and all your AI agents — giving you visibility, control, and safety over everything they do on your behalf.",
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": "Developer ID Application: Bogdan Raduta (W5WKF2N472)",
+      "entitlements": "./entitlements.plist"
+    }
+  }
+}

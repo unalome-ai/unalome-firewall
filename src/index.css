@@ -1,0 +1,424 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 270 40% 4%;
+    --foreground: 0 0% 98%;
+    --card: 270 30% 10%;
+    --card-foreground: 0 0% 98%;
+    --popover: 270 30% 10%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 290 80% 55%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 270 20% 14%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 270 20% 14%;
+    --muted-foreground: 270 10% 60%;
+    --accent: 270 70% 60%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 350 85% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 270 20% 18%;
+    --input: 270 20% 18%;
+    --ring: 290 80% 55%;
+    --radius: 1rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    min-height: 100vh;
+  }
+}
+
+/* Deep purple gradient backgrounds — per-section theming like CleanMyMac */
+.app-bg {
+  background: linear-gradient(
+    180deg,
+    hsl(270 50% 6%) 0%,
+    hsl(280 40% 10%) 40%,
+    hsl(290 35% 14%) 100%
+  );
+  min-height: 100vh;
+}
+
+.app-bg-overview {
+  background: linear-gradient(
+    180deg,
+    hsl(270 50% 6%) 0%,
+    hsl(280 40% 10%) 40%,
+    hsl(290 35% 14%) 100%
+  );
+}
+
+.app-bg-timeline {
+  background: linear-gradient(
+    180deg,
+    hsl(260 50% 6%) 0%,
+    hsl(250 40% 12%) 40%,
+    hsl(240 35% 16%) 100%
+  );
+}
+
+.app-bg-security {
+  background: linear-gradient(
+    180deg,
+    hsl(300 50% 6%) 0%,
+    hsl(310 40% 12%) 40%,
+    hsl(320 30% 16%) 100%
+  );
+}
+
+.app-bg-costs {
+  background: linear-gradient(
+    180deg,
+    hsl(270 50% 6%) 0%,
+    hsl(200 40% 10%) 40%,
+    hsl(190 35% 14%) 100%
+  );
+}
+
+.app-bg-datashield {
+  background: linear-gradient(
+    180deg,
+    hsl(270 50% 6%) 0%,
+    hsl(190 40% 10%) 40%,
+    hsl(180 35% 14%) 100%
+  );
+}
+
+.app-bg-reports {
+  background: linear-gradient(
+    180deg,
+    hsl(270 50% 6%) 0%,
+    hsl(35 40% 10%) 40%,
+    hsl(30 35% 14%) 100%
+  );
+}
+
+.app-bg-control {
+  background: linear-gradient(
+    180deg,
+    hsl(270 50% 6%) 0%,
+    hsl(350 30% 10%) 40%,
+    hsl(340 25% 14%) 100%
+  );
+}
+
+/* Sidebar */
+.sidebar {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(30px);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-item {
+  @apply flex flex-col items-center gap-1 py-3 px-2 rounded-2xl cursor-pointer transition-all duration-200;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.sidebar-item:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-item.active {
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 20px rgba(217, 70, 239, 0.15);
+}
+
+.sidebar-item.active .sidebar-icon {
+  filter: drop-shadow(0 0 6px rgba(217, 70, 239, 0.5));
+}
+
+/* Glass base — for inputs, badges, small elements */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-hover:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Glass morphism cards — more pink/magenta tint */
+.glass-card {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 4px 24px -1px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+}
+
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Gradient backgrounds */
+.gradient-purple {
+  background: linear-gradient(135deg, #D946EF 0%, #A855F7 50%, #8B5CF6 100%);
+}
+
+.gradient-magenta {
+  background: linear-gradient(135deg, #EC4899 0%, #D946EF 100%);
+}
+
+.gradient-cyan {
+  background: linear-gradient(135deg, #06B6D4 0%, #0891B2 100%);
+}
+
+.gradient-rose {
+  background: linear-gradient(135deg, #F43F5E 0%, #E11D48 100%);
+}
+
+.gradient-amber {
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+}
+
+.gradient-emerald {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+}
+
+/* Glow effects */
+.glow-purple {
+  box-shadow: 0 0 40px rgba(168, 85, 247, 0.3);
+}
+
+.glow-magenta {
+  box-shadow: 0 0 40px rgba(217, 70, 239, 0.3);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 40px rgba(6, 182, 212, 0.3);
+}
+
+.glow-rose {
+  box-shadow: 0 0 40px rgba(244, 63, 94, 0.3);
+}
+
+/* Prominent action button (CleanMyMac "Scan" style) */
+.action-button {
+  @apply px-10 py-4 rounded-full font-semibold text-lg text-white;
+  background: linear-gradient(135deg, #D946EF, #EC4899);
+  box-shadow:
+    0 0 30px rgba(217, 70, 239, 0.4),
+    0 8px 32px rgba(236, 72, 153, 0.3);
+  transition: all 0.3s ease;
+}
+
+.action-button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 50px rgba(217, 70, 239, 0.5),
+    0 12px 40px rgba(236, 72, 153, 0.4);
+}
+
+/* Animated gradient border */
+.gradient-border {
+  position: relative;
+  background: linear-gradient(135deg, hsl(270 30% 10%), hsl(270 30% 8%));
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.5), rgba(236, 72, 153, 0.5), rgba(168, 85, 247, 0.5));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: rotate-gradient 4s linear infinite;
+}
+
+@keyframes rotate-gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Circular progress */
+.circular-progress {
+  transform: rotate(-90deg);
+}
+
+.circular-progress-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 8;
+}
+
+.circular-progress-fill {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease;
+}
+
+/* Smooth transitions */
+.transition-smooth {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Pulse animation for live indicators */
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+.pulse-live {
+  animation: pulse-live 2s ease-in-out infinite;
+}
+
+/* Float animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+/* Shimmer effect */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Status badges */
+.status-badge {
+  @apply px-3 py-1 rounded-full text-xs font-semibold backdrop-blur-sm;
+}
+
+.status-safe {
+  @apply bg-emerald-500/20 text-emerald-300 border border-emerald-500/30;
+}
+
+.status-low {
+  @apply bg-blue-500/20 text-blue-300 border border-blue-500/30;
+}
+
+.status-medium {
+  @apply bg-amber-500/20 text-amber-300 border border-amber-500/30;
+}
+
+.status-high {
+  @apply bg-orange-500/20 text-orange-300 border border-orange-500/30;
+}
+
+.status-critical {
+  @apply bg-rose-500/20 text-rose-300 border border-rose-500/30;
+}
+
+/* Large stat numbers */
+.stat-number {
+  @apply text-4xl font-bold tracking-tight;
+  background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Section headers */
+.section-header {
+  @apply text-lg font-semibold mb-4 flex items-center gap-2;
+  background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.8) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card hover lift */
+.card-lift {
+  @apply transition-all duration-300 ease-out;
+}
+
+.card-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.4);
+}
+
+/* Icon containers */
+.icon-container {
+  @apply w-12 h-12 rounded-2xl flex items-center justify-center;
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.2), rgba(168, 85, 247, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.icon-container-purple {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(139, 92, 246, 0.2));
+}
+
+.icon-container-cyan {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.3), rgba(8, 145, 178, 0.2));
+}
+
+.icon-container-rose {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.3), rgba(225, 29, 72, 0.2));
+}
+
+.icon-container-emerald {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(5, 150, 105, 0.2));
+}
+
+.icon-container-amber {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.2));
+}
+
+/* Draggable region for Tauri title bar */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}

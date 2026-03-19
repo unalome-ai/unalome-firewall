@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+src-tauri/target/
+
+# Environment & secrets
+.env
+.env.*
+*.env
+!.env.example
+!.env.signing.example
+
+# Apple code signing & notarization
+*.p12
+*.pem
+*.cer
+*.key
+*.mobileprovision
+*.provisionprofile
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
+*.dmg
+*.app
+*.deb
+*.AppImage
+*.msi
+*.exe
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# IDE & AI tools
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# TypeScript cache
+*.tsbuildinfo
