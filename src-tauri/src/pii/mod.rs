@@ -1,7 +1,7 @@
 use crate::models::{Action, ActionType};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +43,7 @@ pub struct PiiScanner {
     generic_secret_regex: Regex,
     password_regex: Regex,
     env_variable_regex: Regex,
+    disabled_categories: HashSet<String>,
 }
 
 impl PiiScanner {
@@ -156,6 +157,7 @@ impl PiiScanner {
 
         Self {
             patterns,
+            disabled_categories: HashSet::new(),
             // Require the value to be quoted or after = to indicate an actual assignment, not code discussion
             generic_secret_regex: Regex::new(
                 r#"(?i)(secret|api_key|apikey|secret_key|access_token|auth_token)["']*\s*[:=]\s*["']([a-zA-Z0-9+/=_\-]{24,})["']"#
@@ -170,6 +172,10 @@ impl PiiScanner {
         }
     }
 
+    pub fn set_disabled_categories(&mut self, categories: HashSet<String>) {
+        self.disabled_categories = categories;
+    }
+
     pub fn scan_text(
         &self,
         text: &str,
@@ -182,6 +188,9 @@ impl PiiScanner {
         for line in text.lines() {
             // Check all compiled patterns
             for pattern in &self.patterns {
+                if self.disabled_categories.contains(pattern.finding_type) {
+                    continue;
+                }
                 for mat in pattern.regex.find_iter(line) {
                     let matched = mat.as_str();
 
@@ -215,35 +224,65 @@ impl PiiScanner {
             }
 
             // Generic secret detection (high-entropy strings near keywords)
-            for caps in self.generic_secret_regex.captures_iter(line) {
-                if let Some(value) = caps.get(2) {
-                    let val = value.as_str();
-                    if val.len() > 20 && shannon_entropy(val) > 4.5 {
-                        // Skip if already caught by a specific pattern
-                        let already_found = findings.iter().any(|f| {
-                            line.contains(&f.redacted_value.replace("****", ""))
-                                || f.source_context == redact_line(line, val)
-                        });
-                        if already_found {
-                            continue;
-                        }
+            if !self.disabled_categories.contains("api_key") {
+                for caps in self.generic_secret_regex.captures_iter(line) {
+                    if let Some(value) = caps.get(2) {
+                        let val = value.as_str();
+                        if val.len() > 20 && shannon_entropy(val) > 4.5 {
+                            // Skip if already caught by a specific pattern
+                            let already_found = findings.iter().any(|f| {
+                                line.contains(&f.redacted_value.replace("****", ""))
+                                    || f.source_context == redact_line(line, val)
+                            });
+                            if already_found {
+                                continue;
+                            }
 
+                            findings.push(PiiFinding {
+                                id: Uuid::new_v4().to_string(),
+                                action_id: action_id.map(|s| s.to_string()),
+                                agent_id: agent_id.to_string(),
+                                finding_type: "api_key".to_string(),
+                                severity: "critical".to_string(),
+                                description: generate_description(
+                                    "Generic Secret/Key",
+                                    "api_key",
+                                    agent_id,
+                                    source_file,
+                                ),
+                                source_file: source_file.map(|s| s.to_string()),
+                                source_context: redact_line(line, val),
+                                redacted_value: redact_value(val),
+                                recommended_action: generate_recommendation("api_key"),
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                dismissed: false,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Password detection
+            if !self.disabled_categories.contains("password") {
+                for caps in self.password_regex.captures_iter(line) {
+                    if let Some(value) = caps.get(2) {
+                        let val = value.as_str();
                         findings.push(PiiFinding {
                             id: Uuid::new_v4().to_string(),
                             action_id: action_id.map(|s| s.to_string()),
                             agent_id: agent_id.to_string(),
-                            finding_type: "api_key".to_string(),
-                            severity: "critical".to_string(),
+                            finding_type: "password".to_string(),
+                            severity: "high".to_string(),
                             description: generate_description(
-                                "Generic Secret/Key",
-                                "api_key",
+                                "Password",
+                                "password",
                                 agent_id,
                                 source_file,
                             ),
                             source_file: source_file.map(|s| s.to_string()),
                             source_context: redact_line(line, val),
                             redacted_value: redact_value(val),
-                            recommended_action: generate_recommendation("api_key"),
+                            recommended_action: generate_recommendation("password"),
                             timestamp: chrono::Utc::now().to_rfc3339(),
                             dismissed: false,
                         });
@@ -251,57 +290,33 @@ impl PiiScanner {
                 }
             }
 
-            // Password detection
-            for caps in self.password_regex.captures_iter(line) {
-                if let Some(value) = caps.get(2) {
-                    let val = value.as_str();
-                    findings.push(PiiFinding {
-                        id: Uuid::new_v4().to_string(),
-                        action_id: action_id.map(|s| s.to_string()),
-                        agent_id: agent_id.to_string(),
-                        finding_type: "password".to_string(),
-                        severity: "high".to_string(),
-                        description: generate_description(
-                            "Password",
-                            "password",
-                            agent_id,
-                            source_file,
-                        ),
-                        source_file: source_file.map(|s| s.to_string()),
-                        source_context: redact_line(line, val),
-                        redacted_value: redact_value(val),
-                        recommended_action: generate_recommendation("password"),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        dismissed: false,
-                    });
-                }
-            }
-
             // Env variable detection (for .env file context)
-            if let Some(src) = source_file {
-                if src.contains(".env") && self.env_variable_regex.is_match(line) {
-                    if let Some(eq_pos) = line.find('=') {
-                        let val = &line[eq_pos + 1..];
-                        if !val.is_empty() {
-                            findings.push(PiiFinding {
-                                id: Uuid::new_v4().to_string(),
-                                action_id: action_id.map(|s| s.to_string()),
-                                agent_id: agent_id.to_string(),
-                                finding_type: "env_variable".to_string(),
-                                severity: "high".to_string(),
-                                description: generate_description(
-                                    "Environment Variable",
-                                    "env_variable",
-                                    agent_id,
-                                    source_file,
-                                ),
-                                source_file: Some(src.to_string()),
-                                source_context: redact_line(line, val),
-                                redacted_value: redact_value(val),
-                                recommended_action: generate_recommendation("env_variable"),
-                                timestamp: chrono::Utc::now().to_rfc3339(),
-                                dismissed: false,
-                            });
+            if !self.disabled_categories.contains("env_variable") {
+                if let Some(src) = source_file {
+                    if src.contains(".env") && self.env_variable_regex.is_match(line) {
+                        if let Some(eq_pos) = line.find('=') {
+                            let val = &line[eq_pos + 1..];
+                            if !val.is_empty() {
+                                findings.push(PiiFinding {
+                                    id: Uuid::new_v4().to_string(),
+                                    action_id: action_id.map(|s| s.to_string()),
+                                    agent_id: agent_id.to_string(),
+                                    finding_type: "env_variable".to_string(),
+                                    severity: "high".to_string(),
+                                    description: generate_description(
+                                        "Environment Variable",
+                                        "env_variable",
+                                        agent_id,
+                                        source_file,
+                                    ),
+                                    source_file: Some(src.to_string()),
+                                    source_context: redact_line(line, val),
+                                    redacted_value: redact_value(val),
+                                    recommended_action: generate_recommendation("env_variable"),
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    dismissed: false,
+                                });
+                            }
                         }
                     }
                 }

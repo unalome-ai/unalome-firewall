@@ -269,6 +269,14 @@ function ActionCard({ action, agent }: { action: Action; agent?: Agent }) {
           <span title="Protected by Safety Net"><ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" /></span>
         )}
 
+        {/* Firewall decision badge */}
+        {action.metadata?.firewall_decision === "Blocked" && (
+          <span className="px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 text-[10px] font-semibold shrink-0">BLOCKED</span>
+        )}
+        {action.metadata?.firewall_decision === "Flagged" && (
+          <span className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[10px] font-semibold shrink-0">FLAGGED</span>
+        )}
+
         {agent && (
           <span className="px-2 py-0.5 rounded-full glass text-[10px] text-white/40 shrink-0">
             {agent.name}
@@ -344,6 +352,27 @@ function ActionCard({ action, agent }: { action: Action; agent?: Agent }) {
               </div>
             </div>
           )}
+
+          {/* Firewall decision details */}
+          {(() => {
+            const fwDecision = action.metadata?.firewall_decision as string | undefined;
+            const fwRuleName = action.metadata?.firewall_rule_name as string | undefined;
+            const fwReason = action.metadata?.firewall_reason as string | undefined;
+            if (!fwDecision || fwDecision === "Allowed") return null;
+            return (
+              <div className="bg-black/30 rounded-lg px-3 py-2 text-xs">
+                <span className={fwDecision === "Blocked" ? "text-rose-400" : "text-amber-400"}>
+                  Firewall: {fwDecision}
+                </span>
+                {fwRuleName && (
+                  <span className="text-white/40"> &middot; Rule: {fwRuleName}</span>
+                )}
+                {fwReason && (
+                  <p className="text-white/40 mt-1">{fwReason}</p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Model info */}
           {typeof action.metadata?.model === "string" && action.metadata.model !== "unknown" && (

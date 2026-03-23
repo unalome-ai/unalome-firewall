@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   Shield,
+  ShieldAlert,
   Activity,
   Lock,
   DollarSign,
@@ -25,8 +26,9 @@ import { PiiGuardian } from "@/components/PiiGuardian";
 import { SafetyNet } from "@/components/SafetyNet";
 import { DataShield } from "@/components/DataShield";
 import { WeeklyReportPage } from "@/components/WeeklyReportPage";
+import { FirewallRules } from "@/components/FirewallRules";
 import { OnboardingFlow } from "@/components/OnboardingFlow";
-import type { Agent, Action, PiiStats, SafetyNetStats, DataShieldStats } from "@/types";
+import type { Agent, Action, PiiStats, SafetyNetStats, DataShieldStats, FirewallStats } from "@/types";
 import { cn } from "@/lib/utils";
 
 const ONBOARDING_KEY = "unalome_onboarding_complete";
@@ -46,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "pii", label: "PII Guard", icon: Fingerprint, bgClass: "app-bg-pii" },
   { id: "safety", label: "Safety Net", icon: ShieldCheck, bgClass: "app-bg-safety" },
   { id: "datashield", label: "Data Shield", icon: Wifi, bgClass: "app-bg-datashield" },
+  { id: "firewall", label: "Firewall", icon: ShieldAlert, bgClass: "app-bg-firewall" },
   { id: "reports", label: "Reports", icon: BarChart3, bgClass: "app-bg-reports" },
   { id: "control", label: "Control", icon: Power, bgClass: "app-bg-control" },
 ];
@@ -265,6 +268,7 @@ function App() {
           {activeView === "pii" && <PiiGuardian agents={agents} />}
           {activeView === "safety" && <SafetyNet />}
           {activeView === "datashield" && <DataShield />}
+          {activeView === "firewall" && <FirewallRules agents={agents} />}
           {activeView === "reports" && <WeeklyReportPage />}
           {activeView === "control" && (
             <KillSwitch agents={agents} onStatusChange={refreshData} />
@@ -291,17 +295,20 @@ function OverviewView({
   const [piiStats, setPiiStats] = useState<PiiStats | null>(null);
   const [safetyStats, setSafetyStats] = useState<SafetyNetStats | null>(null);
   const [shieldStats, setShieldStats] = useState<DataShieldStats | null>(null);
+  const [firewallStats, setFirewallStats] = useState<FirewallStats | null>(null);
 
   const loadStats = useCallback(async () => {
     try {
-      const [pii, safety, shield] = await Promise.all([
+      const [pii, safety, shield, fw] = await Promise.all([
         invoke<PiiStats>("get_pii_stats"),
         invoke<SafetyNetStats>("get_safety_net_stats"),
         invoke<DataShieldStats>("get_data_shield_stats"),
+        invoke<FirewallStats>("get_firewall_stats"),
       ]);
       setPiiStats(pii);
       setSafetyStats(safety);
       setShieldStats(shield);
+      setFirewallStats(fw);
     } catch (e) {
       console.error("Failed to load overview stats:", e);
     }
@@ -328,6 +335,9 @@ function OverviewView({
     <div className="space-y-8">
       {/* Hero heading */}
       <div className="text-center pt-4 pb-2">
+        <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-2">
+          Unalome Agent Firewall <span className="text-white/20">v0.2.0</span>
+        </p>
         <h1 className="text-3xl font-bold mb-2">
           {agents.length > 0
             ? `${activeAgents} agent${activeAgents !== 1 ? "s" : ""} active.`
@@ -391,12 +401,12 @@ function OverviewView({
             onClick={() => onNavigate("datashield")}
           />
           <StatCard
-            label="Reports"
-            value="Weekly"
-            sub="generate & share"
-            iconClass="icon-container-amber"
-            icon={BarChart3}
-            onClick={() => onNavigate("reports")}
+            label="Firewall"
+            value={firewallStats?.active_rules.toString() ?? "0"}
+            sub={firewallStats && firewallStats.blocked_today > 0 ? `${firewallStats.blocked_today} blocked today` : "rules active"}
+            iconClass="icon-container-rose"
+            icon={ShieldAlert}
+            onClick={() => onNavigate("firewall")}
           />
           <StatCard
             label="Est. Cost"

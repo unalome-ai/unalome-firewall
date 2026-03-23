@@ -1,6 +1,7 @@
 pub mod data_shield;
 pub mod database;
 pub mod discovery;
+pub mod firewall;
 pub mod models;
 pub mod parsers;
 pub mod pii;

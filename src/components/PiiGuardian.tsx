@@ -16,9 +16,11 @@ import {
   Eye,
   Undo2,
   Fingerprint,
+  SlidersHorizontal,
 } from "lucide-react";
-import type { Agent, PiiFinding, PiiStats } from "@/types";
+import type { Agent, PiiCategory, PiiFinding, PiiStats } from "@/types";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 
 interface PiiGuardianProps {
   agents: Agent[];
@@ -44,6 +46,39 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
   phone: Phone,
   ip_address: Globe,
 };
+
+const TYPE_COLORS: Record<string, string> = {
+  api_key: "text-red-400 bg-red-500/20",
+  private_key: "text-red-400 bg-red-500/20",
+  jwt: "text-purple-400 bg-purple-500/20",
+  connection_string: "text-orange-400 bg-orange-500/20",
+  ssn: "text-rose-400 bg-rose-500/20",
+  credit_card: "text-amber-400 bg-amber-500/20",
+  email: "text-cyan-400 bg-cyan-500/20",
+  phone: "text-teal-400 bg-teal-500/20",
+  ip_address: "text-blue-400 bg-blue-500/20",
+  password: "text-pink-400 bg-pink-500/20",
+  env_variable: "text-yellow-400 bg-yellow-500/20",
+};
+
+const CATEGORY_LABELS: Record<PiiCategory, string> = {
+  api_key: "API Keys",
+  private_key: "Private Keys",
+  jwt: "JWT Tokens",
+  connection_string: "Connection Strings",
+  ssn: "Social Security Numbers",
+  credit_card: "Credit Cards",
+  email: "Email Addresses",
+  phone: "Phone Numbers",
+  ip_address: "IP Addresses",
+  password: "Passwords",
+  env_variable: "Env Variables",
+};
+
+const ALL_CATEGORIES: PiiCategory[] = [
+  "api_key", "private_key", "jwt", "connection_string", "ssn",
+  "credit_card", "email", "phone", "ip_address", "password", "env_variable",
+];
 
 function timeAgo(timestamp: string): string {
   const now = Date.now();
@@ -73,6 +108,8 @@ export function PiiGuardian({ agents: _agents }: PiiGuardianProps) {
   const [total, setTotal] = useState(0);
   const [timePeriod, setTimePeriod] = useState("All");
   const [expandedSeverities, setExpandedSeverities] = useState<Set<string>>(new Set());
+  const [categorySettings, setCategorySettings] = useState<Record<string, boolean>>({});
+  const [showSettings, setShowSettings] = useState(false);
 
   const loadFindings = useCallback(async () => {
     try {
@@ -97,6 +134,9 @@ export function PiiGuardian({ agents: _agents }: PiiGuardianProps) {
 
       const piiStats = await invoke<PiiStats>("get_pii_stats");
       setStats(piiStats);
+
+      const settings = await invoke<Record<string, boolean>>("get_pii_category_settings");
+      setCategorySettings(settings);
     } catch (e) {
       console.error("Failed to load PII findings:", e);
     } finally {
@@ -263,6 +303,63 @@ export function PiiGuardian({ agents: _agents }: PiiGuardianProps) {
         </div>
       )}
 
+      {/* Detection Settings */}
+      <div className="glass-card">
+        <button
+          onClick={() => setShowSettings(!showSettings)}
+          className="w-full flex items-center justify-between p-4 hover:opacity-80 transition-opacity"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center">
+              <SlidersHorizontal className="w-4 h-4 text-white/60" />
+            </div>
+            <h3 className="text-sm font-semibold text-white/70">Detection Categories</h3>
+          </div>
+          {showSettings ? (
+            <ChevronDown className="w-4 h-4 text-white/30" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-white/30" />
+          )}
+        </button>
+        {showSettings && (
+          <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {ALL_CATEGORIES.map((cat) => {
+              const Icon = TYPE_ICONS[cat] ?? AlertTriangle;
+              const colorClass = TYPE_COLORS[cat] ?? "";
+              const enabled = categorySettings[cat] !== false;
+              return (
+                <div
+                  key={cat}
+                  className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.03] px-3 py-2"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Icon className={cn("w-4 h-4 shrink-0", colorClass.split(" ")[0])} />
+                    <span className="text-sm text-white/70 truncate">
+                      {CATEGORY_LABELS[cat]}
+                    </span>
+                    <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0", colorClass)}>
+                      {cat}
+                    </span>
+                  </div>
+                  <Switch
+                    checked={enabled}
+                    onCheckedChange={async (checked) => {
+                      setCategorySettings((prev) => ({ ...prev, [cat]: checked }));
+                      try {
+                        await invoke("set_pii_category_enabled", { category: cat, enabled: checked });
+                      } catch (e) {
+                        console.error("Failed to update category setting:", e);
+                        setCategorySettings((prev) => ({ ...prev, [cat]: !checked }));
+                      }
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Empty State */}
       {filteredFindings.length === 0 && findings.length > 0 && (
         <div className="glass-card p-12 text-center">
@@ -415,8 +512,21 @@ function FindingCard({
         <div className="px-3 pb-3 pt-0 ml-10 space-y-2">
           <div className="bg-black/30 rounded-lg px-3 py-2">
             <code className="text-xs text-white/60 font-mono break-all">
-              {finding.source_context || finding.redacted_value}
+              <AnnotatedContext
+                sourceContext={finding.source_context}
+                redactedValue={finding.redacted_value}
+                findingType={finding.finding_type}
+              />
             </code>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className={cn(
+              "text-xs font-mono px-2 py-1 rounded-md",
+              TYPE_COLORS[finding.finding_type] ?? "text-white/60 bg-white/10"
+            )}>
+              {finding.redacted_value}
+            </span>
           </div>
 
           {finding.source_file && (
@@ -432,5 +542,35 @@ function FindingCard({
         </div>
       )}
     </div>
+  );
+}
+
+function AnnotatedContext({
+  sourceContext,
+  redactedValue,
+  findingType,
+}: {
+  sourceContext: string;
+  redactedValue: string;
+  findingType: string;
+}) {
+  const text = sourceContext || redactedValue;
+  const colorClass = TYPE_COLORS[findingType] ?? "text-white/80 bg-white/10";
+  const idx = text.indexOf(redactedValue);
+
+  if (idx === -1) {
+    return <>{text}</>;
+  }
+
+  const before = text.slice(0, idx);
+  const match = text.slice(idx, idx + redactedValue.length);
+  const after = text.slice(idx + redactedValue.length);
+
+  return (
+    <>
+      {before}
+      <span className={cn("px-1 py-0.5 rounded", colorClass)}>{match}</span>
+      {after}
+    </>
   );
 }
