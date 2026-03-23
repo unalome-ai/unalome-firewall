@@ -94,6 +94,15 @@
   );
 }
 
+.app-bg-firewall {
+  background: linear-gradient(
+    180deg,
+    hsl(270 50% 6%) 0%,
+    hsl(340 40% 10%) 40%,
+    hsl(350 35% 14%) 100%
+  );
+}
+
 .app-bg-reports {
   background: linear-gradient(
     180deg,

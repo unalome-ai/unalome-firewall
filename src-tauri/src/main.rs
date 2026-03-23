@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 mod data_shield;
 mod database;
 mod discovery;
+mod firewall;
 mod models;
 mod parsers;
 mod pii;
@@ -18,9 +19,11 @@ mod scanner;
 use data_shield::{DataShieldEngine, DataShieldStats, DomainProfile, OutboundEvent};
 use database::Database;
 use discovery::AgentDiscovery;
+use firewall::{DecisionType, FirewallDecision, FirewallEngine, FirewallRule, FirewallStats};
 use models::ActionType;
 use parsers::AgentWatcher;
 use pii::{PiiFinding, PiiScanner, PiiStats};
+use std::collections::{HashMap, HashSet};
 use safety_net::{RestoreResult, SafetyNetEngine, SafetyNetSettings, SafetyNetStats};
 use scanner::SecurityScanner;
 
@@ -174,8 +177,11 @@ async fn get_pii_stats() -> Result<PiiStats, String> {
 }
 
 #[tauri::command]
-async fn scan_file_for_pii(path: String) -> Result<Vec<PiiFinding>, String> {
-    let scanner = PiiScanner::new();
+async fn scan_file_for_pii(
+    path: String,
+    pii_scanner: tauri::State<'_, Arc<Mutex<PiiScanner>>>,
+) -> Result<Vec<PiiFinding>, String> {
+    let scanner = pii_scanner.lock().await;
     Ok(scanner.scan_file(&path, "manual", None))
 }
 
@@ -185,6 +191,47 @@ async fn delete_pii_findings_by_type(finding_type: String) -> Result<i64, String
     db.delete_pii_findings_by_type(&finding_type)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_pii_category_settings() -> Result<HashMap<String, bool>, String> {
+    let all_categories = vec![
+        "api_key", "private_key", "jwt", "connection_string", "ssn",
+        "credit_card", "email", "phone", "ip_address", "password", "env_variable",
+    ];
+
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    let saved = db.get_pii_category_settings().await.map_err(|e| e.to_string())?;
+
+    let mut result = HashMap::new();
+    for cat in all_categories {
+        let enabled = saved.get(cat).copied().unwrap_or(true);
+        result.insert(cat.to_string(), enabled);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn set_pii_category_enabled(
+    category: String,
+    enabled: bool,
+    pii_scanner: tauri::State<'_, Arc<Mutex<PiiScanner>>>,
+) -> Result<(), String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.set_pii_category_enabled(&category, enabled)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Reload all settings into the scanner
+    let saved = db.get_pii_category_settings().await.map_err(|e| e.to_string())?;
+    let disabled: HashSet<String> = saved
+        .into_iter()
+        .filter(|(_, v)| !v)
+        .map(|(k, _)| k)
+        .collect();
+    let mut scanner = pii_scanner.lock().await;
+    scanner.set_disabled_categories(disabled);
+    Ok(())
 }
 
 // ── Safety Net Commands ──────────────────────────────────────────────
@@ -470,6 +517,114 @@ async fn rescan_mcp_configs(
     Ok(events)
 }
 
+// ── Firewall Commands ────────────────────────────────────────────────
+
+#[tauri::command]
+async fn get_firewall_rules() -> Result<Vec<FirewallRule>, String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.get_firewall_rules().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn create_firewall_rule(
+    rule: FirewallRule,
+    firewall_engine: tauri::State<'_, Arc<Mutex<FirewallEngine>>>,
+) -> Result<FirewallRule, String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.save_firewall_rule(&rule).await.map_err(|e| e.to_string())?;
+
+    // Reload rules into engine
+    let rules = db.get_firewall_rules().await.map_err(|e| e.to_string())?;
+    let mut engine = firewall_engine.lock().await;
+    engine.load_rules(rules);
+
+    Ok(rule)
+}
+
+#[tauri::command]
+async fn update_firewall_rule(
+    rule: FirewallRule,
+    firewall_engine: tauri::State<'_, Arc<Mutex<FirewallEngine>>>,
+) -> Result<(), String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.update_firewall_rule(&rule).await.map_err(|e| e.to_string())?;
+
+    let rules = db.get_firewall_rules().await.map_err(|e| e.to_string())?;
+    let mut engine = firewall_engine.lock().await;
+    engine.load_rules(rules);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_firewall_rule(
+    id: String,
+    firewall_engine: tauri::State<'_, Arc<Mutex<FirewallEngine>>>,
+) -> Result<(), String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.delete_firewall_rule(&id).await.map_err(|e| e.to_string())?;
+
+    let rules = db.get_firewall_rules().await.map_err(|e| e.to_string())?;
+    let mut engine = firewall_engine.lock().await;
+    engine.load_rules(rules);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn toggle_firewall_rule(
+    id: String,
+    enabled: bool,
+    firewall_engine: tauri::State<'_, Arc<Mutex<FirewallEngine>>>,
+) -> Result<(), String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.toggle_firewall_rule(&id, enabled).await.map_err(|e| e.to_string())?;
+
+    let rules = db.get_firewall_rules().await.map_err(|e| e.to_string())?;
+    let mut engine = firewall_engine.lock().await;
+    engine.load_rules(rules);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_firewall_decisions(
+    limit: i64,
+    offset: i64,
+    agent_id: Option<String>,
+    decision_filter: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    let (decisions, total) = db
+        .get_firewall_decisions(
+            limit,
+            offset,
+            agent_id.as_deref(),
+            decision_filter.as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "decisions": decisions, "total": total }))
+}
+
+#[tauri::command]
+async fn get_firewall_stats() -> Result<FirewallStats, String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.get_firewall_stats().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn test_firewall_rule(
+    agent_name: String,
+    tool_name: String,
+    args: serde_json::Value,
+    firewall_engine: tauri::State<'_, Arc<Mutex<FirewallEngine>>>,
+) -> Result<FirewallDecision, String> {
+    let engine = firewall_engine.lock().await;
+    let decision = engine.evaluate("test", "test-agent", &agent_name, &tool_name, &args);
+    Ok(decision)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -489,6 +644,8 @@ fn main() {
             get_pii_stats,
             scan_file_for_pii,
             delete_pii_findings_by_type,
+            get_pii_category_settings,
+            set_pii_category_enabled,
             get_protected_files,
             restore_file,
             restore_multiple,
@@ -507,6 +664,14 @@ fn main() {
             get_weekly_report,
             export_report_html,
             save_report_as_file,
+            get_firewall_rules,
+            create_firewall_rule,
+            update_firewall_rule,
+            delete_firewall_rule,
+            toggle_firewall_rule,
+            get_firewall_decisions,
+            get_firewall_stats,
+            test_firewall_rule,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -518,6 +683,10 @@ fn main() {
             // Initialize DataShieldEngine and register as managed state
             let data_shield = Arc::new(Mutex::new(DataShieldEngine::new()));
             app_handle.manage(data_shield.clone());
+
+            // Initialize FirewallEngine and register as managed state
+            let firewall_engine = Arc::new(Mutex::new(FirewallEngine::new()));
+            app_handle.manage(firewall_engine.clone());
 
             tauri::async_runtime::spawn(async move {
                 // Initialize database
@@ -559,11 +728,98 @@ fn main() {
                     }
                 }
 
-                let agent_watcher = Arc::new(Mutex::new(AgentWatcher::new(&agents)));
-                let pii_scanner = PiiScanner::new();
+                // Load firewall rules into engine, seeding defaults if empty
+                if let Ok(db) = Database::new().await {
+                    if let Ok(rules) = db.get_firewall_rules().await {
+                        if rules.is_empty() {
+                            // Seed 3 predefined firewall rules
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let defaults = vec![
+                                FirewallRule {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    name: "Block destructive commands".to_string(),
+                                    description: "Blocks rm, rmdir, and delete operations to prevent accidental data loss".to_string(),
+                                    agent_pattern: "*".to_string(),
+                                    allow_tools: vec![],
+                                    deny_tools: vec![],
+                                    conditions: vec![firewall::RuleCondition {
+                                        tool_pattern: "Bash".to_string(),
+                                        condition_type: firewall::ConditionType::ArgContains,
+                                        value: "rm ".to_string(),
+                                    }],
+                                    priority: 100,
+                                    enabled: true,
+                                    created_at: now.clone(),
+                                    updated_at: now.clone(),
+                                },
+                                FirewallRule {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    name: "Flag writes to system directories".to_string(),
+                                    description: "Flags any file writes targeting /etc, /usr, or /System directories".to_string(),
+                                    agent_pattern: "*".to_string(),
+                                    allow_tools: vec![],
+                                    deny_tools: vec![],
+                                    conditions: vec![firewall::RuleCondition {
+                                        tool_pattern: "Write".to_string(),
+                                        condition_type: firewall::ConditionType::PathRestriction,
+                                        value: "/etc,/usr,/System".to_string(),
+                                    }],
+                                    priority: 90,
+                                    enabled: true,
+                                    created_at: now.clone(),
+                                    updated_at: now.clone(),
+                                },
+                                FirewallRule {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    name: "Block data exfiltration via curl/wget".to_string(),
+                                    description: "Blocks shell commands that use curl or wget to prevent unauthorized data transfer".to_string(),
+                                    agent_pattern: "*".to_string(),
+                                    allow_tools: vec![],
+                                    deny_tools: vec![],
+                                    conditions: vec![firewall::RuleCondition {
+                                        tool_pattern: "Bash".to_string(),
+                                        condition_type: firewall::ConditionType::ArgContains,
+                                        value: "curl ".to_string(),
+                                    }],
+                                    priority: 95,
+                                    enabled: true,
+                                    created_at: now.clone(),
+                                    updated_at: now,
+                                },
+                            ];
+                            for rule in &defaults {
+                                let _ = db.save_firewall_rule(rule).await;
+                            }
+                            let mut engine = firewall_engine.lock().await;
+                            engine.load_rules(defaults);
+                        } else {
+                            let mut engine = firewall_engine.lock().await;
+                            engine.load_rules(rules);
+                        }
+                    }
+                }
 
-                // Register watcher as managed state so poll_new_actions command can use it
+                let agent_watcher = Arc::new(Mutex::new(AgentWatcher::new(&agents)));
+                let pii_scanner = Arc::new(Mutex::new(PiiScanner::new()));
+
+                // Load disabled PII categories from DB
+                if let Ok(db) = Database::new().await {
+                    if let Ok(saved) = db.get_pii_category_settings().await {
+                        let disabled: HashSet<String> = saved
+                            .into_iter()
+                            .filter(|(_, v)| !v)
+                            .map(|(k, _)| k)
+                            .collect();
+                        if !disabled.is_empty() {
+                            let mut scanner = pii_scanner.lock().await;
+                            scanner.set_disabled_categories(disabled);
+                        }
+                    }
+                }
+
+                // Register watcher and pii_scanner as managed state
                 app_handle.manage(agent_watcher.clone());
+                app_handle.manage(pii_scanner.clone());
 
                 // Start polling loop
                 loop {
@@ -602,11 +858,14 @@ fn main() {
                                     }
 
                                     // PII scanning
-                                    for action in &new_actions {
-                                        let findings = pii_scanner.scan_action(action);
-                                        for finding in &findings {
-                                            let _ = db.save_pii_finding(finding).await;
-                                            let _ = app_handle.emit("pii-finding", finding);
+                                    {
+                                        let scanner = pii_scanner.lock().await;
+                                        for action in &new_actions {
+                                            let findings = scanner.scan_action(action);
+                                            for finding in &findings {
+                                                let _ = db.save_pii_finding(finding).await;
+                                                let _ = app_handle.emit("pii-finding", finding);
+                                            }
                                         }
                                     }
 
@@ -621,6 +880,28 @@ fn main() {
                                         for event in &events {
                                             let _ = db.save_outbound_event(event).await;
                                             let _ = app_handle.emit("outbound-event", event);
+                                        }
+                                    }
+
+                                    // Firewall: evaluate tool calls against rules
+                                    for action in &new_actions {
+                                        if let ActionType::ToolCall { tool_name, args } = &action.action_type {
+                                            let agent_name = agents.iter()
+                                                .find(|a| a.id == action.agent_id)
+                                                .map(|a| a.name.clone())
+                                                .unwrap_or_default();
+                                            let engine = firewall_engine.lock().await;
+                                            let decision = engine.evaluate(
+                                                &action.id,
+                                                &action.agent_id,
+                                                &agent_name,
+                                                tool_name,
+                                                args,
+                                            );
+                                            if decision.decision != DecisionType::Allowed {
+                                                let _ = db.save_firewall_decision(&decision).await;
+                                                let _ = app_handle.emit("firewall-decision", &decision);
+                                            }
                                         }
                                     }
                                 }

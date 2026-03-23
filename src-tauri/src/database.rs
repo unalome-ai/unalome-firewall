@@ -1,4 +1,5 @@
 use crate::data_shield::{DataShieldStats, DomainProfile, OutboundEvent};
+use crate::firewall::{DecisionType, FirewallDecision, FirewallRule, FirewallStats};
 use crate::models::{Action, ActionType, Agent, CostInfo, RiskLevel};
 use crate::pii::{PiiFinding, PiiStats};
 use crate::reports::AgentActionSummary;
@@ -232,6 +233,71 @@ impl Database {
                 generated_at TEXT NOT NULL,
                 report_json TEXT NOT NULL,
                 UNIQUE(week_start)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // ── Firewall tables ──
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS firewall_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                agent_pattern TEXT NOT NULL DEFAULT '*',
+                allow_tools TEXT NOT NULL DEFAULT '[]',
+                deny_tools TEXT NOT NULL DEFAULT '[]',
+                conditions TEXT NOT NULL DEFAULT '[]',
+                priority INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS firewall_decisions (
+                id TEXT PRIMARY KEY,
+                action_id TEXT,
+                timestamp TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                agent_name TEXT,
+                tool_name TEXT NOT NULL,
+                mcp_server TEXT,
+                arguments TEXT,
+                decision TEXT NOT NULL,
+                reason TEXT,
+                rule_id TEXT,
+                rule_name TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_fw_decisions_ts ON firewall_decisions(timestamp)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_fw_decisions_agent ON firewall_decisions(agent_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_fw_decisions_decision ON firewall_decisions(decision)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS pii_category_settings (
+                category TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 1
             )
             "#,
         )
@@ -486,6 +552,31 @@ impl Database {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    pub async fn get_pii_category_settings(&self) -> Result<HashMap<String, bool>> {
+        use sqlx::Row;
+        let rows = sqlx::query("SELECT category, enabled FROM pii_category_settings")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let category: String = row.get("category");
+            let enabled: i32 = row.get("enabled");
+            map.insert(category, enabled != 0);
+        }
+        Ok(map)
+    }
+
+    pub async fn set_pii_category_enabled(&self, category: &str, enabled: bool) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO pii_category_settings (category, enabled) VALUES (?1, ?2)",
+        )
+        .bind(category)
+        .bind(if enabled { 1i32 } else { 0i32 })
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -1458,6 +1549,320 @@ impl Database {
         .fetch_one(&self.pool)
         .await?;
         Ok(count)
+    }
+
+    // ── Firewall Rule CRUD ───────────────────────────────────────────
+
+    pub async fn save_firewall_rule(&self, rule: &FirewallRule) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO firewall_rules (id, name, description, agent_pattern, allow_tools, deny_tools, conditions, priority, enabled, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "#,
+        )
+        .bind(&rule.id)
+        .bind(&rule.name)
+        .bind(&rule.description)
+        .bind(&rule.agent_pattern)
+        .bind(serde_json::to_string(&rule.allow_tools)?)
+        .bind(serde_json::to_string(&rule.deny_tools)?)
+        .bind(serde_json::to_string(&rule.conditions)?)
+        .bind(rule.priority)
+        .bind(rule.enabled as i32)
+        .bind(&rule.created_at)
+        .bind(&rule.updated_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_firewall_rules(&self) -> Result<Vec<FirewallRule>> {
+        let rows = sqlx::query("SELECT * FROM firewall_rules ORDER BY priority DESC")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut rules = Vec::new();
+        for row in rows {
+            rules.push(self.row_to_firewall_rule(&row)?);
+        }
+        Ok(rules)
+    }
+
+    pub async fn update_firewall_rule(&self, rule: &FirewallRule) -> Result<()> {
+        self.save_firewall_rule(rule).await
+    }
+
+    pub async fn delete_firewall_rule(&self, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM firewall_rules WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn toggle_firewall_rule(&self, id: &str, enabled: bool) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("UPDATE firewall_rules SET enabled = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind(enabled as i32)
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    fn row_to_firewall_rule(&self, row: &sqlx::sqlite::SqliteRow) -> Result<FirewallRule> {
+        use sqlx::Row;
+        let allow_str: String = row.try_get("allow_tools").unwrap_or_else(|_| "[]".to_string());
+        let deny_str: String = row.try_get("deny_tools").unwrap_or_else(|_| "[]".to_string());
+        let cond_str: String = row.try_get("conditions").unwrap_or_else(|_| "[]".to_string());
+
+        Ok(FirewallRule {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            description: row.try_get::<String, _>("description").unwrap_or_default(),
+            agent_pattern: row.try_get::<String, _>("agent_pattern").unwrap_or_else(|_| "*".to_string()),
+            allow_tools: serde_json::from_str(&allow_str).unwrap_or_default(),
+            deny_tools: serde_json::from_str(&deny_str).unwrap_or_default(),
+            conditions: serde_json::from_str(&cond_str).unwrap_or_default(),
+            priority: row.try_get("priority").unwrap_or(0),
+            enabled: row.try_get::<i32, _>("enabled").unwrap_or(1) != 0,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+
+    // ── Firewall Decision CRUD ──────────────────────────────────────
+
+    pub async fn save_firewall_decision(&self, decision: &FirewallDecision) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO firewall_decisions (id, action_id, timestamp, agent_id, agent_name, tool_name, mcp_server, arguments, decision, reason, rule_id, rule_name)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "#,
+        )
+        .bind(&decision.id)
+        .bind(&decision.action_id)
+        .bind(&decision.timestamp)
+        .bind(&decision.agent_id)
+        .bind(&decision.agent_name)
+        .bind(&decision.tool_name)
+        .bind(&decision.mcp_server)
+        .bind(serde_json::to_string(&decision.arguments)?)
+        .bind(decision.decision.to_string())
+        .bind(&decision.reason)
+        .bind(&decision.rule_id)
+        .bind(&decision.rule_name)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_firewall_decisions(
+        &self,
+        limit: i64,
+        offset: i64,
+        agent_id: Option<&str>,
+        decision_filter: Option<&str>,
+    ) -> Result<(Vec<FirewallDecision>, i64)> {
+        let total: i64;
+        let rows;
+
+        match (agent_id, decision_filter) {
+            (Some(aid), Some(df)) => {
+                total = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM firewall_decisions WHERE agent_id = ?1 AND decision = ?2",
+                )
+                .bind(aid)
+                .bind(df)
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
+
+                rows = sqlx::query(
+                    "SELECT * FROM firewall_decisions WHERE agent_id = ?1 AND decision = ?2 ORDER BY timestamp DESC LIMIT ?3 OFFSET ?4",
+                )
+                .bind(aid)
+                .bind(df)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?;
+            }
+            (Some(aid), None) => {
+                total = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM firewall_decisions WHERE agent_id = ?1",
+                )
+                .bind(aid)
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
+
+                rows = sqlx::query(
+                    "SELECT * FROM firewall_decisions WHERE agent_id = ?1 ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3",
+                )
+                .bind(aid)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?;
+            }
+            (None, Some(df)) => {
+                total = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM firewall_decisions WHERE decision = ?1",
+                )
+                .bind(df)
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
+
+                rows = sqlx::query(
+                    "SELECT * FROM firewall_decisions WHERE decision = ?1 ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3",
+                )
+                .bind(df)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?;
+            }
+            (None, None) => {
+                total = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM firewall_decisions",
+                )
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
+
+                rows = sqlx::query(
+                    "SELECT * FROM firewall_decisions ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
+                )
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool)
+                .await?;
+            }
+        }
+
+        let mut decisions = Vec::new();
+        for row in rows {
+            decisions.push(self.row_to_firewall_decision(&row)?);
+        }
+
+        Ok((decisions, total))
+    }
+
+    fn row_to_firewall_decision(&self, row: &sqlx::sqlite::SqliteRow) -> Result<FirewallDecision> {
+        use sqlx::Row;
+        let args_str: String = row.try_get("arguments").unwrap_or_else(|_| "{}".to_string());
+        let decision_str: String = row.try_get("decision")?;
+        let decision = match decision_str.as_str() {
+            "Blocked" => DecisionType::Blocked,
+            "Flagged" => DecisionType::Flagged,
+            _ => DecisionType::Allowed,
+        };
+
+        Ok(FirewallDecision {
+            id: row.try_get("id")?,
+            action_id: row.try_get("action_id").unwrap_or_default(),
+            timestamp: row.try_get("timestamp")?,
+            agent_id: row.try_get("agent_id")?,
+            agent_name: row.try_get::<String, _>("agent_name").unwrap_or_default(),
+            tool_name: row.try_get("tool_name")?,
+            mcp_server: row.try_get("mcp_server").ok(),
+            arguments: serde_json::from_str(&args_str).unwrap_or(serde_json::json!({})),
+            decision,
+            reason: row.try_get("reason").unwrap_or_default(),
+            rule_id: row.try_get("rule_id").ok(),
+            rule_name: row.try_get("rule_name").ok(),
+        })
+    }
+
+    pub async fn get_firewall_stats(&self) -> Result<FirewallStats> {
+        let total_rules: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM firewall_rules")
+                .fetch_one(&self.pool)
+                .await?;
+
+        let active_rules: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM firewall_rules WHERE enabled = 1")
+                .fetch_one(&self.pool)
+                .await?;
+
+        let total_decisions: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM firewall_decisions")
+                .fetch_one(&self.pool)
+                .await?;
+
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let today_start = format!("{}T00:00:00", today);
+
+        let decisions_today: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM firewall_decisions WHERE timestamp >= ?1",
+        )
+        .bind(&today_start)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+
+        let blocked_today: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM firewall_decisions WHERE decision = 'Blocked' AND timestamp >= ?1",
+        )
+        .bind(&today_start)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+
+        let flagged_today: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM firewall_decisions WHERE decision = 'Flagged' AND timestamp >= ?1",
+        )
+        .bind(&today_start)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+
+        let allowed_today = decisions_today - blocked_today - flagged_today;
+
+        // Top blocked tools
+        let top_rows = sqlx::query(
+            "SELECT tool_name, COUNT(*) as cnt FROM firewall_decisions WHERE decision = 'Blocked' GROUP BY tool_name ORDER BY cnt DESC LIMIT 5",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut top_blocked_tools = Vec::new();
+        for row in &top_rows {
+            use sqlx::Row;
+            let name: String = row.try_get("tool_name")?;
+            let cnt: i64 = row.try_get("cnt")?;
+            top_blocked_tools.push((name, cnt));
+        }
+
+        // By agent
+        let agent_rows = sqlx::query(
+            "SELECT agent_name, COUNT(*) as cnt FROM firewall_decisions WHERE decision != 'Allowed' GROUP BY agent_name ORDER BY cnt DESC LIMIT 10",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut by_agent = HashMap::new();
+        for row in &agent_rows {
+            use sqlx::Row;
+            let name: String = row.try_get("agent_name").unwrap_or_default();
+            let cnt: i64 = row.try_get("cnt")?;
+            by_agent.insert(name, cnt);
+        }
+
+        Ok(FirewallStats {
+            total_rules,
+            active_rules,
+            total_decisions,
+            decisions_today,
+            blocked_today,
+            flagged_today,
+            allowed_today,
+            top_blocked_tools,
+            by_agent,
+        })
     }
 }
 

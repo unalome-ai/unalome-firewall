@@ -82,6 +82,8 @@ export interface DashboardStats {
   highRiskEvents: number;
 }
 
+export type PiiCategory = "api_key" | "private_key" | "jwt" | "connection_string" | "ssn" | "credit_card" | "email" | "phone" | "ip_address" | "password" | "env_variable";
+
 export interface PiiFinding {
   id: string;
   action_id: string | null;
@@ -209,6 +211,59 @@ export interface WeeklyReport {
   outbound_events: number;
   prev_week_actions: number | null;
   prev_week_cost: number | null;
+}
+
+// ── Firewall ──────────────────────────────────────────────────────
+
+export type ConditionType = "Block" | "MaxAmount" | "ArgContains" | "PathRestriction";
+
+export interface RuleCondition {
+  tool_pattern: string;
+  condition_type: ConditionType;
+  value: string;
+}
+
+export interface FirewallRule {
+  id: string;
+  name: string;
+  description: string;
+  agent_pattern: string;
+  allow_tools: string[];
+  deny_tools: string[];
+  conditions: RuleCondition[];
+  priority: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DecisionType = "Allowed" | "Blocked" | "Flagged";
+
+export interface FirewallDecision {
+  id: string;
+  action_id: string;
+  timestamp: string;
+  agent_id: string;
+  agent_name: string;
+  tool_name: string;
+  mcp_server: string | null;
+  arguments: Record<string, unknown>;
+  decision: DecisionType;
+  reason: string;
+  rule_id: string | null;
+  rule_name: string | null;
+}
+
+export interface FirewallStats {
+  total_rules: number;
+  active_rules: number;
+  total_decisions: number;
+  decisions_today: number;
+  blocked_today: number;
+  flagged_today: number;
+  allowed_today: number;
+  top_blocked_tools: [string, number][];
+  by_agent: Record<string, number>;
 }
 
 export interface WeeklyReportSummary {
