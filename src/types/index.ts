@@ -266,6 +266,22 @@ export interface FirewallStats {
   by_agent: Record<string, number>;
 }
 
+// ── Agent Plans ──────────────────────────────────────────────────
+
+export interface AgentPlan {
+  id: string;
+  file_name: string;
+  slug: string;
+  file_path: string;
+  display_name: string;
+  title: string | null;
+  file_size: number;
+  created_at: string;
+  modified_at: string;
+  content: string;
+  action_count: number;
+}
+
 export interface WeeklyReportSummary {
   id: string;
   week_start: string;

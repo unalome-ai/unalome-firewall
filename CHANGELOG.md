@@ -2,6 +2,23 @@
 
 All notable changes to Unalome Agent Firewall will be documented in this file.
 
+## [0.3.0] - 2026-03-26
+
+### Added
+
+- **Agent Plans Tab** — Browse implementation plans written by Claude Code during plan mode (`~/.claude/plans/*.md`). Plans are scanned from disk, cached in SQLite, and displayed with full markdown rendering (tables, code blocks, headings).
+- **Plan-Action Linking** — Every captured action now carries a `slug` field from its JSONL record. Actions are linked back to the plan they belong to, with action counts shown on each plan card and a collapsible "Linked Actions" section in the detail view.
+- **Plan Detail View** — Click any plan to see its full markdown content rendered with `react-markdown` + `remark-gfm`, along with metadata (slug, file size, last modified, action count) and a timeline of all tool calls executed during that plan.
+- **Real-Time Plan Updates** — When Claude Code writes to `~/.claude/plans/`, a `plan-updated` event is emitted and the Plans tab refreshes automatically.
+
+### Technical
+
+- `ClaudeCodeParser` now extracts `slug`, `permissionMode`, and `sessionId` into action metadata for both tool calls and system records.
+- New `AgentPlan` Rust model and `agent_plans` SQLite table with indexes on `slug` and `modified_at`.
+- Four new Tauri commands: `scan_agent_plans`, `get_agent_plans`, `get_plan_actions`, `get_agent_plan_content`.
+- New `AgentPlan` TypeScript interface.
+- Added `react-markdown`, `remark-gfm`, and `@tailwindcss/typography` dependencies.
+
 ## [0.2.0] - 2026-03-23
 
 ### Added

@@ -20,7 +20,7 @@ use data_shield::{DataShieldEngine, DataShieldStats, DomainProfile, OutboundEven
 use database::Database;
 use discovery::AgentDiscovery;
 use firewall::{DecisionType, FirewallDecision, FirewallEngine, FirewallRule, FirewallStats};
-use models::ActionType;
+use models::{ActionType, AgentPlan};
 use parsers::AgentWatcher;
 use pii::{PiiFinding, PiiScanner, PiiStats};
 use std::collections::{HashMap, HashSet};
@@ -625,6 +625,117 @@ async fn test_firewall_rule(
     Ok(decision)
 }
 
+// ── Agent Plans Commands ────────────────────────────────────────────
+
+#[tauri::command]
+async fn scan_agent_plans() -> Result<Vec<AgentPlan>, String> {
+    let plans_dir = dirs::home_dir()
+        .ok_or("Cannot determine home directory")?
+        .join(".claude")
+        .join("plans");
+
+    if !plans_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    let mut active_file_names = Vec::new();
+
+    let entries: Vec<_> = std::fs::read_dir(&plans_dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+        .collect();
+
+    for entry in &entries {
+        let path = entry.path();
+        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+        let slug = file_name.trim_end_matches(".md").to_string();
+        let display_name = slug
+            .split('-')
+            .map(|w| {
+                let mut chars = w.chars();
+                match chars.next() {
+                    Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+
+        let title = content
+            .lines()
+            .find(|l| l.starts_with("# "))
+            .map(|l| {
+                let heading = l.trim_start_matches("# ").trim();
+                // Strip "Plan: " prefix if present
+                heading.strip_prefix("Plan: ").unwrap_or(heading).to_string()
+            });
+
+        let created_at = meta.created()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let modified_at = meta.modified()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+        let plan = AgentPlan {
+            id: format!("plan-{}", slug),
+            file_name: file_name.clone(),
+            slug: slug.clone(),
+            file_path: path.to_string_lossy().to_string(),
+            display_name,
+            title,
+            file_size: meta.len(),
+            created_at: chrono::DateTime::<chrono::Utc>::from(created_at).to_rfc3339(),
+            modified_at: chrono::DateTime::<chrono::Utc>::from(modified_at).to_rfc3339(),
+            content,
+            action_count: 0,
+        };
+
+        let _ = db.upsert_plan(&plan).await;
+        active_file_names.push(file_name);
+    }
+
+    let _ = db.delete_stale_plans(&active_file_names).await;
+
+    let action_counts = db.get_plan_action_counts().await.unwrap_or_default();
+    let mut plans = db.get_all_plans().await.map_err(|e| e.to_string())?;
+    for plan in &mut plans {
+        plan.action_count = action_counts.get(&plan.slug).copied().unwrap_or(0);
+    }
+
+    Ok(plans)
+}
+
+#[tauri::command]
+async fn get_agent_plans() -> Result<Vec<AgentPlan>, String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    let action_counts = db.get_plan_action_counts().await.unwrap_or_default();
+    let mut plans = db.get_all_plans().await.map_err(|e| e.to_string())?;
+    for plan in &mut plans {
+        plan.action_count = action_counts.get(&plan.slug).copied().unwrap_or(0);
+    }
+    Ok(plans)
+}
+
+#[tauri::command]
+async fn get_plan_actions(slug: String) -> Result<Vec<models::Action>, String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    db.get_actions_for_plan(&slug).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_agent_plan_content(id: String) -> Result<String, String> {
+    let db = Database::new().await.map_err(|e| e.to_string())?;
+    let plans = db.get_all_plans().await.map_err(|e| e.to_string())?;
+    plans.into_iter()
+        .find(|p| p.id == id)
+        .map(|p| p.content)
+        .ok_or_else(|| "Plan not found".to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -672,6 +783,10 @@ fn main() {
             get_firewall_decisions,
             get_firewall_stats,
             test_firewall_rule,
+            scan_agent_plans,
+            get_agent_plans,
+            get_plan_actions,
+            get_agent_plan_content,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -905,6 +1020,19 @@ fn main() {
                                         }
                                     }
                                 }
+                                // Detect plan file writes and emit plan-updated
+                                for action in &new_actions {
+                                    if let ActionType::ToolCall { tool_name, args } = &action.action_type {
+                                        if matches!(tool_name.as_str(), "Write" | "Edit") {
+                                            if let Some(path) = args.get("file_path").and_then(|v| v.as_str()) {
+                                                if path.contains(".claude/plans/") {
+                                                    let _ = app_handle.emit("plan-updated", path);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Emit event to frontend
                                 let _ = app_handle.emit("new_actions", ());
                             }
