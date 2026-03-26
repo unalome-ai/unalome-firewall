@@ -1,6 +1,6 @@
 use crate::data_shield::{DataShieldStats, DomainProfile, OutboundEvent};
 use crate::firewall::{DecisionType, FirewallDecision, FirewallRule, FirewallStats};
-use crate::models::{Action, ActionType, Agent, CostInfo, RiskLevel};
+use crate::models::{Action, ActionType, Agent, AgentPlan, CostInfo, RiskLevel};
 use crate::pii::{PiiFinding, PiiStats};
 use crate::reports::AgentActionSummary;
 use crate::safety_net::{ProtectedFile, SafetyNetStats};
@@ -303,6 +303,33 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS agent_plans (
+                id TEXT PRIMARY KEY,
+                file_name TEXT NOT NULL UNIQUE,
+                slug TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                title TEXT,
+                file_size INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                modified_at TEXT NOT NULL,
+                content TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_plans_slug ON agent_plans(slug)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_plans_modified ON agent_plans(modified_at)")
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
@@ -1863,6 +1890,125 @@ impl Database {
             top_blocked_tools,
             by_agent,
         })
+    }
+
+    // ── Agent Plans ─────────────────────────────────────────────────
+
+    pub async fn upsert_plan(&self, plan: &AgentPlan) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO agent_plans
+                (id, file_name, slug, file_path, display_name, title, file_size, created_at, modified_at, content)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "#,
+        )
+        .bind(&plan.id)
+        .bind(&plan.file_name)
+        .bind(&plan.slug)
+        .bind(&plan.file_path)
+        .bind(&plan.display_name)
+        .bind(&plan.title)
+        .bind(plan.file_size as i64)
+        .bind(&plan.created_at)
+        .bind(&plan.modified_at)
+        .bind(&plan.content)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_all_plans(&self) -> Result<Vec<AgentPlan>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, i64, String, String, String)>(
+            "SELECT id, file_name, slug, file_path, display_name, title, file_size, created_at, modified_at, content FROM agent_plans ORDER BY modified_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| AgentPlan {
+            id: r.0,
+            file_name: r.1,
+            slug: r.2,
+            file_path: r.3,
+            display_name: r.4,
+            title: r.5,
+            file_size: r.6 as u64,
+            created_at: r.7,
+            modified_at: r.8,
+            content: r.9,
+            action_count: 0,
+        }).collect())
+    }
+
+    pub async fn delete_stale_plans(&self, active_file_names: &[String]) -> Result<()> {
+        if active_file_names.is_empty() {
+            sqlx::query("DELETE FROM agent_plans")
+                .execute(&self.pool)
+                .await?;
+            return Ok(());
+        }
+        let placeholders: Vec<String> = (1..=active_file_names.len()).map(|i| format!("?{}", i)).collect();
+        let sql = format!("DELETE FROM agent_plans WHERE file_name NOT IN ({})", placeholders.join(","));
+        let mut query = sqlx::query(&sql);
+        for name in active_file_names {
+            query = query.bind(name);
+        }
+        query.execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_actions_for_plan(&self, slug: &str) -> Result<Vec<Action>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, String, Option<i64>, Option<i64>, Option<i64>, Option<i64>, Option<f64>, String)>(
+            r#"SELECT id, agent_id, action_type, timestamp, description, risk_level,
+                      cost_input, cost_output, cache_write_tokens, cache_read_tokens, cost_usd, metadata
+               FROM actions
+               WHERE json_extract(metadata, '$.slug') = ?1
+               ORDER BY timestamp DESC"#,
+        )
+        .bind(slug)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().filter_map(|r| {
+            let action_type: ActionType = serde_json::from_str(&r.2).ok()
+                .or_else(|| Some(parse_debug_value(&r.2)).and_then(|v| serde_json::from_value(v).ok()))
+                .unwrap_or(ActionType::Other(r.2.clone()));
+            let risk_level: RiskLevel = serde_json::from_str(&format!("\"{}\"", r.5)).unwrap_or(RiskLevel::Low);
+            let cost = match (r.6, r.7, r.10) {
+                (Some(inp), Some(out), Some(usd)) => Some(CostInfo {
+                    tokens_input: inp as u64,
+                    tokens_output: out as u64,
+                    cache_write_tokens: r.8.unwrap_or(0) as u64,
+                    cache_read_tokens: r.9.unwrap_or(0) as u64,
+                    estimated_cost_usd: usd,
+                }),
+                _ => None,
+            };
+            let metadata: serde_json::Value = serde_json::from_str(&r.11).unwrap_or(serde_json::json!({}));
+            let timestamp = chrono::DateTime::parse_from_rfc3339(&r.3).ok()?.with_timezone(&chrono::Utc);
+            Some(Action {
+                id: r.0,
+                agent_id: r.1,
+                action_type,
+                timestamp,
+                description: r.4,
+                risk_level,
+                cost,
+                metadata,
+            })
+        }).collect())
+    }
+
+    pub async fn get_plan_action_counts(&self) -> Result<HashMap<String, u32>> {
+        let rows = sqlx::query_as::<_, (String, i64)>(
+            r#"SELECT json_extract(metadata, '$.slug') as slug, COUNT(*)
+               FROM actions
+               WHERE slug IS NOT NULL AND slug != ''
+               GROUP BY slug"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|(slug, count)| (slug, count as u32)).collect())
     }
 }
 

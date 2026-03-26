@@ -121,6 +121,12 @@
   );
 }
 
+.app-bg-plans {
+  background: radial-gradient(ellipse at 30% 20%, rgba(168, 85, 247, 0.08) 0%, transparent 60%),
+              radial-gradient(ellipse at 70% 80%, rgba(59, 130, 246, 0.06) 0%, transparent 60%),
+              #0a0a0f;
+}
+
 /* Sidebar */
 .sidebar {
   background: rgba(0, 0, 0, 0.3);

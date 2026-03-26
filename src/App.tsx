@@ -16,6 +16,7 @@ import {
   Wifi,
   BarChart3,
   RotateCcw,
+  FileText,
 } from "lucide-react";
 import { AgentGrid } from "@/components/AgentGrid";
 import { TimelineFeed } from "@/components/TimelineFeed";
@@ -27,6 +28,7 @@ import { SafetyNet } from "@/components/SafetyNet";
 import { DataShield } from "@/components/DataShield";
 import { WeeklyReportPage } from "@/components/WeeklyReportPage";
 import { FirewallRules } from "@/components/FirewallRules";
+import { AgentPlans } from "@/components/AgentPlans";
 import { OnboardingFlow } from "@/components/OnboardingFlow";
 import type { Agent, Action, PiiStats, SafetyNetStats, DataShieldStats, FirewallStats } from "@/types";
 import { cn } from "@/lib/utils";
@@ -50,6 +52,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "datashield", label: "Data Shield", icon: Wifi, bgClass: "app-bg-datashield" },
   { id: "firewall", label: "Firewall", icon: ShieldAlert, bgClass: "app-bg-firewall" },
   { id: "reports", label: "Reports", icon: BarChart3, bgClass: "app-bg-reports" },
+  { id: "plans", label: "Plans", icon: FileText, bgClass: "app-bg-plans" },
   { id: "control", label: "Control", icon: Power, bgClass: "app-bg-control" },
 ];
 
@@ -270,6 +273,7 @@ function App() {
           {activeView === "datashield" && <DataShield />}
           {activeView === "firewall" && <FirewallRules agents={agents} />}
           {activeView === "reports" && <WeeklyReportPage />}
+          {activeView === "plans" && <AgentPlans />}
           {activeView === "control" && (
             <KillSwitch agents={agents} onStatusChange={refreshData} />
           )}
@@ -336,7 +340,7 @@ function OverviewView({
       {/* Hero heading */}
       <div className="text-center pt-4 pb-2">
         <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-2">
-          Unalome Agent Firewall <span className="text-white/20">v0.2.0</span>
+          Unalome Agent Firewall <span className="text-white/20">v0.3.0</span>
         </p>
         <h1 className="text-3xl font-bold mb-2">
           {agents.length > 0

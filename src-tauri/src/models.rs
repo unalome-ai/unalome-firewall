@@ -101,6 +101,21 @@ pub struct SecurityWarning {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPlan {
+    pub id: String,
+    pub file_name: String,
+    pub slug: String,
+    pub file_path: String,
+    pub display_name: String,
+    pub title: Option<String>,
+    pub file_size: u64,
+    pub created_at: String,
+    pub modified_at: String,
+    pub content: String,
+    pub action_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WarningCategory {
     PromptInjection,
     ExcessivePermissions,

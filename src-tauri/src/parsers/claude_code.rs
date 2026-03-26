@@ -152,6 +152,15 @@ impl ClaudeCodeParser {
                     .and_then(|m| m.get("model"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown"),
+                "slug": record.get("slug")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                "permission_mode": record.get("permissionMode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                "session_id": record.get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
             }),
         })
     }
@@ -181,7 +190,19 @@ impl ClaudeCodeParser {
                     description: format!("API error: {} (status {})", error_type, status),
                     risk_level: RiskLevel::Low,
                     cost: None,
-                    metadata: json.clone(),
+                    metadata: serde_json::json!({
+                        "error_type": error_type,
+                        "status": status,
+                        "slug": json.get("slug")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        "permission_mode": json.get("permissionMode")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        "session_id": json.get("sessionId")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                    }),
                 })
             }
             _ => None,
